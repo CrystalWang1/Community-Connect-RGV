@@ -1,4 +1,5 @@
 from brand import header_logo
+"""Local prototype accounts. No external service or API key is required."""
 
 import hashlib
 import hmac
@@ -15,7 +16,28 @@ import streamlit.components.v1 as components
 
 AUTH_DB = Path(__file__).with_name("accounts.db")
 ITERATIONS = 600_000
-ADMIN_EMAILS = {"wangc7007@gmail.com"}
+
+
+def secret(name):
+    """Read a value from Streamlit Secrets (.streamlit/secrets.toml locally, the app's Secrets box when deployed)."""
+    try:
+        value = st.secrets.get(name)
+    except Exception:  # no secrets file at all
+        return None
+    return str(value).strip() if value else None
+
+
+def admin_emails():
+    """Admin email(s) come from the ADMIN_EMAIL secret so they never appear in the public code."""
+    return {email.strip().lower() for email in (secret("ADMIN_EMAIL") or "").split(",") if email.strip()}
+
+
+ADMIN_EMAILS = admin_emails()  # kept for any page that imported this name
+
+
+def reserved_emails():
+    """Emails nobody can sign up with: the admin and demo accounts are created from Secrets instead."""
+    return admin_emails() | ({secret("DEMO_EMAIL").lower()} if secret("DEMO_EMAIL") else set())
 
 
 def is_admin():
@@ -24,7 +46,7 @@ def is_admin():
         return False
     with closing(sqlite3.connect(AUTH_DB)) as connection:
         row = connection.execute("SELECT email FROM users WHERE id = ?", (user["id"],)).fetchone()
-    return bool(row and row[0].strip().lower() in ADMIN_EMAILS)
+    return bool(row and row[0].strip().lower() in admin_emails())
 
 
 def require_admin():
@@ -42,7 +64,7 @@ AUTH_TEXT = {
            "mismatch": "Passwords do not match.", "exists": "An account with this email already exists. Use Sign in.",
            "created": "Account created! Open the Sign in tab to continue.",
            "cookie_blocked": "Your browser blocked the cookie change. Allow cookies and refresh to continue.",
-           "other_language": "Español"},
+           "other_language": "Español", "try_demo": "Try the demo (no account needed)"},
     "es": {"welcome": "Hola, {name}", "sign_out": "Cerrar sesión", "eyebrow": "Tu comunidad local, conectada",
            "tagline": "Encuentra ayuda. Descubre programas. Haz planes cerca de ti.",
            "intro": "Inicia sesión para encontrar recursos y eventos comunitarios.", "sign_in": "Iniciar sesión",
@@ -56,7 +78,7 @@ AUTH_TEXT = {
            "exists": "Ya existe una cuenta con este correo. Usa Iniciar sesión.",
            "created": "¡Cuenta creada! Abre la pestaña Iniciar sesión para continuar.",
            "cookie_blocked": "Tu navegador bloqueó el cambio de cookies. Permite las cookies y recarga la página para continuar.",
-           "other_language": "English"},
+           "other_language": "English", "try_demo": "Probar la demostración (sin cuenta)"},
 }
 
 
@@ -88,6 +110,30 @@ def initialize_accounts():
             token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
             expires_at INTEGER NOT NULL)""")
         connection.execute("DELETE FROM remembered_sessions WHERE expires_at <= ?", (int(time.time()),))
+    seed_accounts(
+        (secret("ADMIN_NAME") or "Admin", (secret("ADMIN_EMAIL") or "").split(",")[0].strip().lower(), secret("ADMIN_PASSWORD")),
+        (secret("DEMO_NAME") or "Demo User", (secret("DEMO_EMAIL") or "").lower(), secret("DEMO_PASSWORD")),
+    )
+
+
+@st.cache_resource(show_spinner=False)
+def seed_accounts(*accounts):
+    """Create (or update the password of) the admin and demo accounts from Secrets.
+
+    Runs once per server start, so these accounts exist before anyone else can sign up with the same email,
+    and they come back automatically whenever a free host resets the database.
+    """
+    with closing(sqlite3.connect(AUTH_DB)) as connection, connection:
+        for name, email, password in accounts:
+            if not email or not password:
+                continue
+            salt = os.urandom(32)
+            if connection.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+                connection.execute("UPDATE users SET salt = ?, password_hash = ? WHERE email = ?",
+                                   (salt, password_hash(password, salt), email))
+            else:
+                connection.execute("INSERT INTO users (name,email,salt,password_hash) VALUES (?,?,?,?)",
+                                   (name, email, salt, password_hash(password, salt)))
 
 
 def token_hash(token):
@@ -198,6 +244,15 @@ def require_account():
     if language.button(auth_text("other_language"), icon=":material/language:", key="signin_language", use_container_width=True):
         st.session_state.lang = "es" if st.session_state.get("lang", "en") == "en" else "en"
         st.rerun()
+    if secret("DEMO_EMAIL") and secret("DEMO_PASSWORD"):
+        if st.button(auth_text("try_demo"), icon=":material/play_circle:", key="try_demo", type="primary"):
+            user = authenticate(secret("DEMO_EMAIL"), secret("DEMO_PASSWORD"))
+            if user:
+                revoke_token(token)
+                st.session_state.user = user
+                st.session_state.saved = set()
+                cookie_command("clear")
+                st.rerun()
     st.markdown("""<style>
     [data-testid="stTextInput"] div:has(> [data-testid="InputInstructions"]) {
         position: static !important;
@@ -251,6 +306,8 @@ def require_account():
                 st.error(auth_text("short_password"))
             elif password != confirmation:
                 st.error(auth_text("mismatch"))
+            elif normalized in reserved_emails():
+                st.error(auth_text("exists"))
             else:
                 try:
                     create_account(name, normalized, password)
