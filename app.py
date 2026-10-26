@@ -21,7 +21,7 @@ TEXT = {
         "free_only": "Free only", "when": "When", "anytime": "Anytime", "next_7": "Next 7 days", "next_30": "Next 30 days",
         "place_hint": "McAllen or 78501", "keyword": "Search by word", "keyword_hint": "Tutoring, Food, Screening...", "show_map": "Show map", "map_hint": "Hover over a circle for details, or click it to see the full listing.", "map_selected": "Selected on the map",
         "results_one": "1 result", "results_many": "{n} results", "in_place": " in {place}", "across": " across cities",
-        "events_one": "1 upcoming event", "events_many": "{n} upcoming events",
+        "events_one": "1 event", "events_many": "{n} events", "ongoing": "Ongoing",
         "no_results": "No listings match these filters. Try another city/ZIP, category, or time range. Demo cities: McAllen, Brownsville, and Edinburg.",
         "no_saved": "Nothing saved yet. Use ♡ Save on any listing to keep it here for this session.",
         "no_map": "These listings don't have a city we can place on the map yet.",
@@ -36,7 +36,7 @@ TEXT = {
         "ask_disclaimer": "AI answers can make mistakes. Call ahead to confirm hours and eligibility.",
         "suggestions": ["I need help paying my rent this month", "Where can my kids go after school?",
                         "Necesito comida gratis para mi familia", "I want to get my GED in English",
-                        "Free healthcare clinic near McAllen",],
+                        "Free healthcare clinic near McAllen", "Help with immigration questions"],
     },
     "es": {
         "eyebrow": "Tu comunidad local, conectada", "tagline": "Encuentra ayuda. Descubre programas. Haz planes cerca de ti.",
@@ -47,7 +47,7 @@ TEXT = {
         "next_7": "Próximos 7 días", "next_30": "Próximos 30 días", "place_hint": "McAllen o 78501", "keyword": "Buscar por palabra",
         "keyword_hint": "Tutoría, comida, exámenes...", "show_map": "Mostrar mapa", "map_hint": "Pasa el cursor sobre un círculo para ver detalles, o haz clic para ver el recurso completo.", "map_selected": "Seleccionado en el mapa",
         "results_one": "1 resultado", "results_many": "{n} resultados", "in_place": " en {place}",
-        "across": " en todas las ciudades", "events_one": "1 evento próximo", "events_many": "{n} eventos próximos",
+        "across": " en todas las ciudades", "events_one": "1 evento", "events_many": "{n} eventos", "ongoing": "Continuo",
         "no_results": "Ningún resultado coincide con estos filtros. Prueba otra ciudad/código postal, categoría o fecha. Ciudades de demostración: McAllen, Brownsville y Edinburg.",
         "no_saved": "Aún no has guardado nada. Usa ♡ Guardar en cualquier recurso para tenerlo aquí durante esta sesión.",
         "no_map": "Todavía no podemos ubicar la ciudad de estos resultados en el mapa.",
@@ -116,6 +116,8 @@ def resource_card(row, key_prefix):
             if row["event_end_date"]:
                 st.caption(f'{t("event_period")}: {format_date(date.fromisoformat(row["event_date"]), lang() == "es")} – {format_date(date.fromisoformat(row["event_end_date"]), lang() == "es")}')
             st.markdown(f'<i class="cc-ico" aria-label="date">calendar_month</i> {format_date(date.fromisoformat(row["event_date"]), lang() == "es")} &middot; {escape(row["hours"])}', unsafe_allow_html=True)
+        elif row["category"] == "Events":
+            st.markdown(f'<i class="cc-ico" aria-label="date">event_repeat</i> **{t("ongoing")}** &middot; {escape(row["hours"])}', unsafe_allow_html=True)
         else:
             st.markdown(f'<i class="cc-ico" aria-label="hours">schedule</i> {escape(row["hours"])}', unsafe_allow_html=True)
         st.write(row["description"])
@@ -150,7 +152,12 @@ def resource_map(rows, key_prefix):
             # Spread listings that share an address or city center in a small ring so each circle can be clicked.
             angle = 2 * math.pi * index / len(group)
             spread = 0.006 if len(group) > 1 else 0
-            when = (format_date(date.fromisoformat(row["event_date"]), lang() == "es") + " · " if row["event_date"] else "") + row["hours"]
+            if row["event_date"]:
+                when = format_date(date.fromisoformat(row["event_date"]), lang() == "es") + " · " + row["hours"]
+            elif row["category"] == "Events":
+                when = t("ongoing") + " · " + row["hours"]
+            else:
+                when = row["hours"]
             points.append({
                 "id": row["id"], "lat": lat + spread * math.sin(angle), "lon": lon + spread * math.cos(angle),
                 "name": escape(row["name"]), "when": escape(when), "category": escape(category_name(row["category"])),
@@ -222,7 +229,7 @@ def listing_page(rows, key_prefix, events=False):
             return False
         if keyword and keyword.casefold() not in " ".join(str(row[k]) for k in ("name", "category", "summary", "description")).casefold():
             return False
-        if timing != "anytime":
+        if timing != "anytime" and row["event_date"]:  # ongoing events (no date) count for every time range
             limit = today + timedelta(days=7 if timing == "next_7" else 30)
             if date.fromisoformat(row["event_date"]) > limit:
                 return False
@@ -250,7 +257,9 @@ def browse_resources():
 
 
 def browse_events():
-    rows = sorted((row for row in current_rows() if row["event_date"]), key=lambda row: row["event_date"])
+    # Dated events first (soonest first), then ongoing/recurring events that have the Events category but no date.
+    rows = [row for row in current_rows() if row["event_date"] or row["category"] == "Events"]
+    rows.sort(key=lambda row: (row["event_date"] is None, row["event_date"] or "", row["name"]))
     listing_page(rows, "evt", events=True)
 
 
