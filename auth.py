@@ -110,10 +110,15 @@ def initialize_accounts():
             token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
             expires_at INTEGER NOT NULL)""")
         connection.execute("DELETE FROM remembered_sessions WHERE expires_at <= ?", (int(time.time()),))
-    seed_accounts(
-        (secret("ADMIN_NAME") or "Admin", (secret("ADMIN_EMAIL") or "").split(",")[0].strip().lower(), secret("ADMIN_PASSWORD")),
-        (secret("DEMO_NAME") or "Demo User", (secret("DEMO_EMAIL") or "").lower(), secret("DEMO_PASSWORD")),
-    )
+        accounts = (
+            (secret("ADMIN_NAME") or "Admin", (secret("ADMIN_EMAIL") or "").split(",")[0].strip().lower(), secret("ADMIN_PASSWORD")),
+            (secret("DEMO_NAME") or "Demo User", (secret("DEMO_EMAIL") or "").lower(), secret("DEMO_PASSWORD")),
+        )
+        # If the database was deleted or replaced while the app was running, create the accounts again.
+        if any(email and password and not connection.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone()
+               for _, email, password in accounts):
+            seed_accounts.clear()
+    seed_accounts(*accounts)
 
 
 @st.cache_resource(show_spinner=False)
