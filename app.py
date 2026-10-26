@@ -36,7 +36,7 @@ TEXT = {
         "ask_disclaimer": "AI answers can make mistakes. Call ahead to confirm hours and eligibility.",
         "suggestions": ["I need help paying my rent this month", "Where can my kids go after school?",
                         "Necesito comida gratis para mi familia", "I want to get my GED in English",
-                        "Free healthcare clinic near McAllen", "Help with immigration questions"],
+                        "Free healthcare clinic near McAllen"],
     },
     "es": {
         "eyebrow": "Tu comunidad local, conectada", "tagline": "Encuentra ayuda. Descubre programas. Haz planes cerca de ti.",
